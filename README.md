@@ -106,3 +106,102 @@ command, with an independent controller timeout. A 300 ms burst resembles the
 observed panel burst duration. **The configured 20 ms interval is not claimed to
 be an exact measurement of the original panel's RF timing.**
 Transmit success is not an acknowledgement from the lamp.
+## Obtain your own device binding information
+
+**Use your own panel and lamp. Do not copy another user's sender identity.**
+The BLE advertiser address, the controller/sender ID inside an advertisement,
+and an authentication key are distinct concepts. This experiment identified a
+stable controller-ID candidate; it did not establish that the ID is a cryptographic
+key or a globally unique lamp ID.
+
+1. Build/flash the public firmware above, close the web server and any serial
+   monitor, and install the serial dependency:
+
+   ~~~bash
+   python3 -m venv .venv
+   .venv/bin/python -m pip install -r requirements.txt
+   .venv/bin/python tools/capture.py --serial-port YOUR_USB_PORT --seconds 30
+   ~~~
+
+2. Keep your panel near the C3. Leave it idle briefly, then press “off” five times
+   about two seconds apart, followed by a few homework/favorite presses. Keep
+   track of the timing. Capture is passive and sends no lamp-control command.
+   It records nearby BLE advertisements, so keep the result private.
+3. List candidate controllers locally:
+
+   ~~~bash
+   .venv/bin/python tools/inspect_binding.py .local/captures/panel.jsonl
+   ~~~
+
+4. Correlate report bursts with your own presses, repeat the capture if needed,
+   and select that controller's observed address:
+
+   ~~~bash
+   .venv/bin/python tools/inspect_binding.py .local/captures/panel.jsonl \
+     --address YOUR_CONTROLLER_ADDRESS
+   ~~~
+
+   The tool writes an ignored **.local/device-profile.json**. In the observed
+   manufacturer-data variant, it reads only the four plain sender-ID bytes after
+   the version byte. It does not decode the remaining payload, verify binding,
+   derive authentication keys, or construct a control frame. An unrelated BLE
+   device can resemble that header; the generated ID remains a candidate.
+5. Keep that profile and all captures local. Complete and validate your private
+   adapter using your own device information and protocol work. If your variant
+   needs additional authentication material, it must be obtained legitimately
+   for your device; an advertiser address or candidate ID is not a substitute.
+
+The public project does not pair, rebind or overwrite lamp favorites.
+
+## Add your private adapter locally
+
+See [the private adapter interface](private/README.md).
+Copy the unavailable example to an ignored local source, implement the interface
+yourself, and explicitly select that file:
+
+~~~bash
+cp private/adapter.example.c private/adapter.local.c
+idf.py -DLAMP_PRIVATE_ADAPTER=private/adapter.local.c build
+~~~
+
+An absolute path outside the repository also works. The original private
+implementation is not present in this repository, including its untracked files.
+
+With a completed adapter and initialized counter:
+
+~~~bash
+.venv/bin/python web/server.py --serial-port YOUR_USB_PORT
+~~~
+
+On a fresh NVS namespace, an adapter can recognize your physical panel to
+initialize the counter. Alternatively, provide your own last known counter with
+the optional **--seed-counter** argument. An initialized counter cannot be
+rewound by a subsequent seed command.
+
+## Home Assistant and Mijia integration ideas
+
+These are proposed extensions, not claims that this public build is already
+connected to those platforms.
+
+| Route | What to add | Notes |
+| --- | --- | --- |
+| HA -> existing HTTP bridge | HA REST commands/scripts for /api/action and /api/absolute | The server binds loopback. HA must be able to reach that host; a different host/container needs deliberate network/authentication work. |
+| HA -> C3 over MQTT | Wi-Fi/MQTT firmware and command dispatch to the same semantic operations | Can eventually remove the computer/USB dependency. |
+| Mijia Mesh module -> C3 | Low-voltage, three-channel momentary dry-contact module and GPIO inputs | Channels map to original favorite, a stored brightness/CCT preset, and off. Native momentary reset avoids brightness encoding. Local/offline execution depends on the gateway and rule. |
+| XiaoAi IR -> C3 | Compatible IR receiver and RMT decoding | Reuse three distinct remote commands exposed by the chosen Mijia template. Check automation availability, repeated identical commands and receiver placement. |
+| Bemfa -> C3 | Wi-Fi/MQTT and a Bemfa account | Official device synchronization exists. Verify the required Mijia UI/automation actions and end-to-end latency on the current app. This adds a third-party cloud dependency. |
+
+For a second favorite, store absolute brightness and CCT externally; no additional
+favorite slot in the lamp has been verified. Validate recall from the off state
+and check for an unwanted bright flash before relying on a preset.
+The original panel can remain in use, but this one-way broadcast approach does
+not provide authoritative lamp state feedback.
+
+## References
+
+- [Espressif ESP-IDF 5.4.2 / ESP32-C3 BLE device discovery](https://docs.espressif.com/projects/esp-idf/en/v5.4.2/esp32c3/api-guides/ble/get-started/ble-device-discovery.html)
+- [smartLightConnector](https://github.com/v1ack/smartLightConnector) and [ha-ble-adv LE codec](https://github.com/NicoIIT/ha-ble-adv/blob/main/custom_components/ble_adv/codecs/le.py): community reverse engineering of related LE lighting protocols, **not Honeywell's official protocol specification**.
+- [Bemfa device synchronization](https://cloud.bemfa.com/v2/docs/start/mi.html)
+- [Xiaomi's Home Assistant integration](https://github.com/XiaoMi/ha_xiaomi_home): imports Xiaomi devices into HA; it does not by itself publish this custom C3 controller into Mijia.
+
+Code is MIT licensed. The front photograph was supplied for this project.
