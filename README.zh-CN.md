@@ -97,3 +97,72 @@ ESP32-C3 固件框架。面板标签注明 **BLE／LeMesh**，使用两颗 CR303
 300ms 窗口接近实测原面板的广播持续时长；**20ms 是本项目的配置值，
 不能视为已经精确测得的原面板空口间隔。**
 发送成功也不等于收到灯具执行回执。
+## 如何获取自己的设备绑定信息
+
+**使用自己的面板与灯具，不要复制其他人的控制器身份。**
+蓝牙广播地址、广播里的控制器／发送端标识，以及认证密钥，是不同概念。
+本次实验识别到了稳定的控制器标识候选字段，但不能据此认定它是密码学密钥，
+或是全局唯一的灯具 ID。
+
+1. 编译、烧录上面的公开固件，关闭网页服务器及其他串口监视器，然后安装依赖：
+
+   ~~~bash
+   python3 -m venv .venv
+   .venv/bin/python -m pip install -r requirements.txt
+   .venv/bin/python tools/capture.py --serial-port YOUR_USB_PORT --seconds 30
+   ~~~
+
+2. 把自己的面板放在 C3 附近，先空闲几秒，再每隔约两秒按一次“关”，共五次；
+   随后按几次“作业模式”或“我的最爱”，记住时间。
+   抓包过程只扫描，不向灯发送控制指令。记录里可能包含附近其他蓝牙设备，
+   因此文件必须留在本地。
+3. 查看本地候选控制器列表：
+
+   ~~~bash
+   .venv/bin/python tools/inspect_binding.py .local/captures/panel.jsonl
+   ~~~
+
+4. 根据按键时间与广播突发的对应关系确认自己的控制器，必要时重复采集，
+   然后选择观察到的地址：
+
+   ~~~bash
+   .venv/bin/python tools/inspect_binding.py .local/captures/panel.jsonl \
+     --address YOUR_CONTROLLER_ADDRESS
+   ~~~
+
+   工具会写入已被 Git 忽略的 **.local/device-profile.json**。
+   对当前观察到的厂家数据变体，工具只读取版本字节后四个明文发送端标识字节；
+   不解码后续负载、不验证绑定、不推导认证密钥，也不构造完整控灯帧。
+   其他蓝牙设备也可能具有相似头部，因此输出仍然只是待验证的候选信息。
+5. 把设备配置和完整抓包保留在本地，结合自己的设备信息和协议分析完成私有适配。
+   如果其他版本还需要额外认证材料，需从自己设备的合法开发／绑定流程获取；
+   广播地址或候选 ID 不能替代认证材料。
+
+公开工程不会给灯具配对、重新绑定或覆盖收藏。
+## 接入 HA 或米家的思路
+
+下列是扩展方案，**不代表公开固件已经实现相应平台接入**。
+
+| 路径 | 需要补充的内容 | 使用说明 |
+| --- | --- | --- |
+| HA → 现有 HTTP 桥 | 用 REST 命令／脚本调用 /api/action、/api/absolute | 服务只监听回环地址；HA 要能访问该主机。跨主机或容器部署需另外处理网络与认证。 |
+| HA → C3 MQTT | 增加 Wi-Fi、MQTT 与语义指令分发 | 最终可脱离电脑和 USB 串口桥。 |
+| 米家 Mesh 模组 → C3 | 低压、三路点动干接点模组及 GPIO 输入 | 三路对应原装最爱、亮度／色温组合收藏、关灯。利用模组内置点动复位，无需亮度编码；是否本地／离线执行取决于网关和规则。 |
+| 小爱红外 → C3 | 增加兼容红外接收器及 RMT 解码 | 借用米家遥控模板里的三个不同按键，确认能加入自动化、重复同一动作仍发码，并注意接收器摆位。 |
+| 巴法云 → C3 | 增加 Wi-Fi／MQTT，并绑定巴法云账号 | 官方提供设备同步；当前米家的页面、自动化执行能力及端到端延迟需要实测，会增加第三方云依赖。 |
+
+第二收藏档可以在 C3 或 HA 中保存绝对亮度与色温组合，不需要猜测灯具内部是否
+存在第二收藏槽。使用前应补测从关灯状态直接进入收藏档，并检查是否先亮后调暗。
+原装面板可继续使用，但单向广播不能提供权威的灯具状态反馈。
+
+## 参考资料
+
+- [Espressif ESP-IDF 5.4.2／ESP32-C3 BLE 设备发现](https://docs.espressif.com/projects/esp-idf/en/v5.4.2/esp32c3/api-guides/ble/get-started/ble-device-discovery.html)
+- [smartLightConnector](https://github.com/v1ack/smartLightConnector)、
+  [ha-ble-adv LE codec](https://github.com/NicoIIT/ha-ble-adv/blob/main/custom_components/ble_adv/codecs/le.py)：
+  同族 LE 灯控协议的社区逆向资料，**不是霍尼韦尔官方公开的协议规范**。
+- [巴法云设备同步文档](https://cloud.bemfa.com/v2/docs/start/mi.html)
+- [小米官方 HA 集成](https://github.com/XiaoMi/ha_xiaomi_home)：
+  将米家设备导入 HA，本身不能把这个自定义 C3 控制器发布为米家设备。
+
+代码使用 MIT 许可证。正面照片由本项目使用者提供。
